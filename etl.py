@@ -13,8 +13,7 @@ game_list_base = f'https://api.sibr.dev/chronicler/v1/games?order=desc&team={tea
 client = boto3.client("dynamodb")
 
 def get_games():
-    data = requests.get(game_list_base)
-    games = data.json()
+    games = requests.get(game_list_base).json()
     if "data" in games:
         for game in games["data"]:
             yield game["gameId"]
@@ -32,10 +31,25 @@ def get_updates(game):
         else:
             running = False
 
+cache_max = 25
+update_cache = []
 def save_update(update):
+    update_cache.append(prep_update(update))
+    if len(update_cache) == cache_max:
+        persist_cache()
+
+def persist_cache():
+    if not update_cache:
+        return
     table_name = 'steak_updates'
-    payload = prep_update(update)
-    client.put_item(TableName=table_name, Item=payload)
+    client.batch_write_item(
+        RequestItems={
+            table_name: [
+                {'PutRequest': {'Item': item} for item in update_cache}
+            ]
+        }
+    )
+    update_cache.clear()
 
 def main():
     last_update = None
@@ -60,6 +74,7 @@ def main():
         # set the first update as the current one being displayed
         first_update['hash'] = "current"
         save_update(first_update)
+    persist_cache()
 
 def prep_update(update):
     d = update['data']
