@@ -47,6 +47,8 @@ def get_updates(game):
                     yield update
             else:
                 running = False
+        except KeyboardInterrupt:
+            raise
         except:
             # sibr is being sleepy.
             # let's take a nap and hope they wake up
@@ -54,29 +56,45 @@ def get_updates(game):
             time.sleep(1)
 
 
+total_writes = 0
 cache_max = 25
 update_cache = []
 
 
 def save_update(update):
-    update_cache.append(prep_update(update))
+    parsed_update = prep_update(update)
+
+    update_cache.append(parsed_update)
     if len(update_cache) == cache_max:
         persist_cache()
 
 
 def persist_cache():
+    global total_writes
+
     if not update_cache:
         return
+
+    delay = 1
     table_name = "steak_updates"
-    client.batch_write_item(
-        RequestItems={
-            table_name: [{"PutRequest": {"Item": item} for item in update_cache}]
-        }
-    )
+    request_items = {table_name: [
+        {"PutRequest": {"Item": item}} for item in update_cache]}
+    while request_items:
+        response = client.batch_write_item(RequestItems=request_items)
+        request_items = response["UnprocessedItems"]
+        if request_items:
+            print(f"{len(request_items)} missed, trying again...")
+            # dynamo db rate limited
+            time.sleep(delay)
+            delay *= (delay+1)
+
+    total_writes += len(update_cache)
     update_cache.clear()
 
 
 def main():
+    global total_writes
+
     last_update = None
     next_id = None
     first_update = None
@@ -102,6 +120,7 @@ def main():
         first_update["hash"] = "current"
         save_update(first_update)
     persist_cache()
+    print(total_writes)
 
 
 def prep_update(update):
